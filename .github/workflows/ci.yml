@@ -44,4 +44,4 @@ jobs:
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/yottaflex_pipeline
       run: |
-        pytest
+        PYTHONPATH=. pytest
