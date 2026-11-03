@@ -62,3 +62,30 @@ A complete prompt history and explanation of personal contributions will be prov
 ### Known Limitations
 
 To be documented after implementation and testing.
+
+---
+
+## Tech Stack
+- **Language:** Python 3.10+
+- **Database & ORM:** PostgreSQL & SQLAlchemy
+- **Containerization:** Docker & Docker Compose
+- **Testing:** Pytest
+- **CI/CD:** GitHub Actions
+
+---
+
+## Project Structure
+```text
+yottaflex-data-platform-engineering/
+├── .github/workflows/ci.yml    # GitHub Actions CI workflow
+├── config/pipeline.yaml        # Pipeline configuration settings
+├── data/
+│   ├── sample/orders.csv       # Sample source dataset
+│   ├── generated/              # Output/generated files directory
+│   └── corrected/              # Corrected files for replay directory
+├── docs/                       # Architecture, design decisions, and AI logs
+├── sql/reporting_queries.sql   # Operational & analytical SQL queries
+├── src/pipeline/               # Core pipeline modules (DB, models, validation, ingest, replay, CLI)
+├── tests/                      # Pytest test suite
+├── requirements.txt            # Python dependencies
+└── docker-compose.yml          # Local PostgreSQL container service

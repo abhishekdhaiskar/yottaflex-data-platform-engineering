@@ -1,0 +1,13 @@
+pipeline:
+  name: "YottaFlex Quarantine and Controlled Replay Data Pipeline"
+  version: "1.0.0"
+  batch_size: 1000
+  paths:
+    sample_data: "data/sample/orders.csv"
+    generated_data: "data/generated/"
+    corrected_data: "data/corrected/"
+  validation_rules:
+    require_order_id: true
+    require_customer_id: true
+    min_amount: 0.01
+    allow_future_dates: false
