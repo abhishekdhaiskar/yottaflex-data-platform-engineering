@@ -1,14 +1,15 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
+*.egg-info/
 
 # Virtual environment
 .venv/
 venv/
 
-# Testing
+# Testing / lint caches
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -21,18 +22,7 @@ htmlcov/
 .vscode/
 .idea/
 
-# Logs
+# Local, regenerable runtime output (reports/ IS committed as evidence)
+logs/
 *.log
-
-# Local database
 *.db
-
-# Generated data
-data/generated/*
-data/corrected/*
-reports/*
-
-# Keep empty folders
-!data/generated/.gitkeep
-!data/corrected/.gitkeep
-!reports/.gitkeep

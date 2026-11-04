@@ -12,10 +12,11 @@ Python 3.11+, **standard library only** (SQLite). `pytest` (tests) and `ruff` (l
 git clone <your-repo-url> && cd <repo>
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt                          # pytest only
-make test      # 59 tests            (or: PYTHONPATH=src python -m pytest -v)
+make test      # 59 tests, writes reports/test_results.txt  (or: PYTHONPATH=src python -m pytest -v)
 make lint      # ruff (optional: pip install ruff)
 make demo      # full scenario       (or: ./scripts/demo.sh)
-make benchmark # 100k-order timing
+make benchmark # 100k-order timing, writes reports/benchmark.txt
+make check     # pre-submission self-check (files, placeholders, secrets, git state)
 ```
 `make demo` produces `data/warehouse.db`, `logs/pipeline.log` and `reports/reconciliation.md`.
 Windows without `make`: set `PYTHONPATH=src` and call the commands in section 5 directly.
@@ -117,7 +118,7 @@ Ready-made SQL in `sql_sample_queries.sql`.
 | invalid reference key | `test_unknown_customer_vs_bad_format`, replay tests |
 | rerun same input | `test_rerun_same_file_is_skipped`, `test_forced_rerun_creates_no_duplicates` |
 | domain edge cases | amount boundaries 0.01 / 1,000,000.00, >2 decimals, `updated_at < order_ts`, history preserved on update |
-| replay | 9 tests in `test_replay.py` (untouched good rows, corrections audit, idempotent, dry-run, filters) |
+| replay | 8 tests in `test_replay.py` (untouched good rows, corrections audit, idempotent, dry-run, filters) |
 | reconciliation | `test_reconciliation_detects_corruption` (the checks really fail on bad data) |
 | configuration | `test_config.py` (defaults, TOML override changes behaviour, unknown key rejected) |
 | CLI contract | `test_cli.py` (exit codes 0/1/2) |
@@ -140,6 +141,7 @@ Numbers vary by machine.
 * No currency conversion; no status-transition rules (e.g. DELIVERED -> CREATED is accepted if versioned later).
 * Orchestration (Airflow/cron) and alerting (e.g. on non-zero exit / quarantine thresholds) not included.
 * Non-UTF-8 files fail the run (documented, not auto-repaired).
+* Rows loaded by `replay` carry `source_file = 'replay'`; their original file/line is kept in the `quarantine` row (see `docs/CODE_WALKTHROUGH.md`).
 
 ## 12. Naming conventions
 snake_case tables/columns; `dim_`/`fact_` prefixes; IDs: `ORD-########`, `CUST-######`, quarantine `q_<16 hex>` (deterministic),
@@ -147,3 +149,29 @@ snake_case tables/columns; `dim_`/`fact_` prefixes; IDs: `ORD-########`, `CUST-#
 
 ## 13. AI usage
 See `docs/AI_USAGE.md` and `prompts/PROMPT_LOG.md`.
+
+## 14. How to verify this submission
+```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+make test && make demo
+```
+Expected: `59 passed`; `label check: OK - pipeline behaviour matches all expected labels`; `reconciliation: ALL CHECKS PASSED`.
+Evidence produced by these commands is committed in `reports/` (`test_results.txt`, `benchmark.txt`, `reconciliation.md`).
+**Environment:** Python 3.11+ (uses `tomllib`), `make` + bash (Windows: Git Bash or WSL, or run the commands in section 5). No network, no database server, no API keys, no paid services.
+
+### 5-minute reviewer walkthrough
+1. `make demo` - watch the 10 steps (bad rows quarantined, re-run skipped, schema change fails cleanly, replay after the fix).
+2. Open `reports/reconciliation.md` - 7 checks, all PASS, plus quarantine by error code and status.
+3. `sqlite3 data/warehouse.db < sql_sample_queries.sql` - run history, trace a rejected row to file + line + raw payload.
+4. Read `src/qpipe/loader.py` (version-aware upsert, shared by ingest and replay) then `replay.py`.
+5. `tests/test_replay.py` and `tests/test_ingest.py` map to the scenario table in section 8.
+
+## 15. How AI was used
+See `docs/AI_USAGE.md` (what AI did vs. what I reviewed and validated) and `prompts/PROMPT_LOG.md` (all prompts).
+
+## 16. Third-party code, licences, data safety
+* Runtime dependencies: **none** (Python standard library only). Dev tools: `pytest` and `ruff` (both MIT-licensed, installed from PyPI, not vendored).
+* No existing pipeline or solution code is included; the project is released under the MIT `LICENSE` in this repository.
+* All data in `data/` is **synthetic** (seeded generator). No credentials, personal data or proprietary code are in the repository.
+* More review material: `docs/CODE_WALKTHROUGH.md` (decisions, where to find them, known weak spots).

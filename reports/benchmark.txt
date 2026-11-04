@@ -1,0 +1,5 @@
+generate 100,000 orders: 3.34s
+OPTIMISED ingest: 111,002 rows in 5.07s = 21,888 rows/s (valid=100,002 quarantined=10,000 dup_dropped=1,000)
+OPTIMISED batch_02 (updates/late): 16,000 rows in 0.88s = 18,194 rows/s
+NAIVE baseline: 2,768 rows in 3.02s = 917 rows/s (per-row SELECT + commit per row)
+speed-up optimised vs naive: ~24x
