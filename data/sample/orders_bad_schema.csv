@@ -1,0 +1,2 @@
+order_id,customer_id,order_ts,total_amount,currency,status,updated_at
+ORD-90000001,CUST-000001,2026-02-01T00:00:00Z,10.00,USD,PAID,2026-02-02T00:00:00Z

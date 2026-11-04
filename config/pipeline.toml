@@ -1,0 +1,14 @@
+# Pipeline configuration. Every key is optional - omitted keys use the defaults in src/qpipe/config.py.
+# Use with:  python -m qpipe --config config/pipeline.toml <command>
+
+db_path    = "data/warehouse.db"
+log_file   = "logs/pipeline.log"
+chunk_size = 5000                      # rows per executemany() batch
+
+[rules]                                # business rules - change here, not in code
+statuses     = ["CREATED", "PAID", "SHIPPED", "DELIVERED", "CANCELLED", "REFUNDED"]
+currencies   = ["USD", "EUR", "GBP", "INR"]
+min_cents    = 1                       # 0.01
+max_cents    = 100000000               # 1,000,000.00
+order_id_pattern    = '^ORD-\d{6,12}$'
+customer_id_pattern = '^CUST-\d{4,12}$'

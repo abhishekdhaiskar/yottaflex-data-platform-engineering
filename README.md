@@ -1,91 +1,149 @@
-# YottaFlex Data Engineering Challenge
+# Quarantine & Controlled Replay Pipeline (Orders)
 
-## Quarantine and Controlled Replay Data Pipeline
+A small, fully local data-engineering pipeline that **validates incoming order files, routes bad
+records to a quarantine table (with reason + source file/line + raw payload), and lets an operator
+replay only the quarantined rows after a fix** - without touching rows that already loaded.
 
-### Project Overview
+Python 3.11+, **standard library only** (SQLite). `pytest` (tests) and `ruff` (lint, optional) are the only dev tools.
 
-This project implements a reliable batch data engineering pipeline that ingests source records, validates data quality, transforms valid records, publishes them to a target database, and routes invalid records to a quarantine store.
+## 1. Quick start (clean machine, ~1 minute)
 
-The pipeline also provides a controlled replay mechanism that allows corrected records to be reprocessed without unnecessarily processing previously successful records.
+```bash
+git clone <your-repo-url> && cd <repo>
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt                          # pytest only
+make test      # 59 tests            (or: PYTHONPATH=src python -m pytest -v)
+make lint      # ruff (optional: pip install ruff)
+make demo      # full scenario       (or: ./scripts/demo.sh)
+make benchmark # 100k-order timing
+```
+`make demo` produces `data/warehouse.db`, `logs/pipeline.log` and `reports/reconciliation.md`.
+Windows without `make`: set `PYTHONPATH=src` and call the commands in section 5 directly.
 
-### Business Objectives
+## 2. Architecture / flow
 
-- Ingest structured source data.
-- Validate schema and business rules.
-- Detect duplicate and invalid records.
-- Preserve rejected records with error reasons and source context.
-- Publish valid records into curated tables.
-- Support controlled replay after correction.
-- Ensure safe reruns and idempotent processing.
-- Track execution metrics and operational failures.
+```
+ orders_*.csv ─► read + schema check ─► row validation ─► in-batch dedupe ─► version-aware publish ─► fact_order (current)
+ (source)         │ missing column?      │ 8 error codes     │ exact dup: drop    │ one transaction      fact_order_history (all versions)
+                  ▼                      ▼                   ▼ conflict: reject   │
+              run = FAILED           ┌──────────────────── quarantine ◄───────────┘ (raw JSON + codes + file + line)
+              (nothing loaded)       │
+                                     ▼
+   operator fixes cause / writes corrections.csv ─► `replay` (PENDING rows only, same validator + same loader)
+                                     │
+   every step writes a row to pipeline_run  ─►  `reconcile` report + `verify-labels`
+```
+Modules (`src/qpipe/`), each with one responsibility:
 
-### Technology Stack
+| module | responsibility |
+|---|---|
+| `config.py` + `config/pipeline.toml` | all business rules & settings (statuses, currencies, amount limits, id patterns, paths, chunk size) - **nothing hardcoded in logic** |
+| `validation.py` | pure row validation/normalisation (`validate_record(raw, customers, rules)`) |
+| `loader.py` | idempotent, version-aware publish; shared by ingest **and** replay |
+| `ingest.py` | read file, classify rows, orchestrate one atomic load |
+| `replay.py` | controlled replay of PENDING quarantine rows |
+| `reference.py` | strict load of `dim_customer` |
+| `runs.py` | `RunResult` + `pipeline_run` persistence (observability) |
+| `ids.py` | deterministic ids, hashing, run ids |
+| `reconcile.py` / `labels.py` | validation report / expected-label verification |
+| `generator.py`, `benchmark.py`, `db.py`, `cli.py` | data generator, timing, schema, command line |
 
-- Python
-- PostgreSQL
-- SQLAlchemy
-- Docker
-- Docker Compose
-- Pytest
-- GitHub Actions
+## 3. Key design decisions (short; full note in `docs/design_note.md`)
 
-### Architecture
+| Decision | Why |
+|---|---|
+| SQLite | Zero setup, transactional, SQL for reconciliation; swap for Postgres by changing `db.py`. |
+| One transaction per file | A crash can never leave half a batch loaded. Retry = run the same command. |
+| `(order_id, updated_at)` is the record version | Makes loads idempotent and handles late/out-of-order data deterministically. |
+| `fact_order` = current, `fact_order_history` = every version | History is preserved, never silently overwritten. |
+| Quarantine keeps the **raw payload and original reason immutable** | Full traceability; replay writes `last_error_*`, `attempts`, `corrections` separately. |
+| Replay reuses validator + loader | No second code path to drift out of sync. |
+| Amounts stored as integer cents (`Decimal` parsing) | No float rounding in aggregates. |
 
-Source Data → Raw Ingestion → Validation → Transformation → Curated Storage
+### Configuration (no hardcoding)
+Rules and settings come from `config/pipeline.toml` (auto-loaded if present, or `--config path`); omitted keys fall back to
+typed defaults in `config.py`; unknown keys or invalid bounds fail fast with exit code 2. A test guarantees the shipped TOML equals the code defaults,
+and another proves that changing the config changes pipeline behaviour (`tests/test_config.py`). CLI flags (`--db`, `--log-file`, `--chunk-size`) override the file.
+Exit codes: `0` ok, `1` run FAILED / reconciliation failed / label mismatch, `2` bad configuration - so cron/Airflow can alert on them.
 
-Invalid Records → Quarantine → Correction → Controlled Replay
+## 4. Assumptions
+* Source is CSV files dropped per batch; one row = one version of an order (`updated_at` = version).
+* Naive timestamps are treated as UTC; offsets are converted to UTC; stored as ISO-8601 `...Z`.
+* Currencies: USD/EUR/GBP/INR; amount 0.01-1,000,000.00 with max 2 decimals; amounts are not converted across currencies.
+* `customers.csv` is trusted reference data: strict load, any bad row fails that load.
+* Zero-byte file (no header) = FAILED; header-only file = SUCCESS with 0 rows.
+* Extra columns are ignored with a warning; a missing required column fails the whole file (nothing loaded).
 
-### Project Status
+## 5. Commands
 
-Phase 0: Repository and project setup.
+```bash
+export PYTHONPATH=src            # PowerShell: $env:PYTHONPATH="src"
+python -m qpipe generate --orders 200 --seed 42          # inputs -> data/sample, labels -> data/labels
+python -m qpipe load-customers --file data/sample/customers.csv
+python -m qpipe ingest --file data/sample/orders_batch_01.csv [--force] [--chunk-size 5000]
+python -m qpipe replay [--error-code X] [--source-file F] [--source-run-id R] [--id Q] [--limit N] [--corrections corrections.csv] [--dry-run]
+python -m qpipe reconcile --out reports/reconciliation.md   # exit code 1 if any check fails
+python -m qpipe verify-labels data/labels/labels_batch_01.csv data/labels/labels_batch_02.csv
+python -m qpipe runs
+python -m qpipe.benchmark --orders 100000
+```
+Large dataset: `python -m qpipe generate --orders 100000 --out data/large --labels-dir data/labels_large` then ingest `data/large/*`.
 
-Phase 1: Database and environment setup.
+Ready-made SQL in `sql_sample_queries.sql`.
 
-Phase 2: Core data ingestion and validation.
+## 6. Error codes
+`MALFORMED_ROW` (wrong field count) · `MISSING_REQUIRED` · `INVALID_FORMAT` (ids, ISO timestamps) · `INVALID_TYPE` (non-numeric amount) ·
+`INVALID_VALUE` (range, >2 decimals, `updated_at < order_ts`) · `INVALID_ENUM` (status/currency) · `UNKNOWN_CUSTOMER` (referential) ·
+`DUPLICATE_CONFLICT` (same key+version, different content). All errors on a row are collected, not just the first.
 
-Phase 3: Quarantine and controlled replay.
+## 7. Idempotency, retry, restart, backfill
+* **Re-run same file**: sha256 recorded; identical file already `SUCCESS` -> run recorded as `SKIPPED`.
+* **`--force`**: reprocesses anyway; safe because history PK `(order_id, updated_at)` makes each row `UNCHANGED`; quarantine ids are deterministic (`sha1(file_sha256:line)`) and inserted `OR IGNORE`, so rejects are not duplicated and resolved ones stay resolved.
+* **Partial failure / restart**: whole file is one transaction -> rollback, run = `FAILED` with the error, exit code 1. `FAILED` runs never block a retry. (Test: `test_partial_failure_rolls_back_and_retry_works`.)
+* **Replay**: touches only `PENDING` rows; a 2nd replay selects 0 rows. `--dry-run` writes nothing. Failed attempts increment `attempts`.
+* **Backfill**: ingest historical files in any order; version comparison guarantees the newest version wins and older ones go to history as `LATE`.
 
-Phase 4: Testing, observability and idempotency.
+## 8. Test evidence (`reports/test_results.txt`, 59 tests; CI in `.github/workflows/ci.yml` runs lint + tests + demo)
+| Required scenario | Test(s) |
+|---|---|
+| happy path | `test_happy_path`, `test_full_pipeline_matches_labels_and_reconciles` |
+| empty batch | `test_empty_batch_header_only`, `test_zero_byte_file_fails` |
+| malformed records | `test_malformed_row_quarantined_with_context` |
+| missing required / nulls | `test_missing_required`, `test_nulls_and_invalid_reference_quarantined` |
+| duplicates | `test_exact_duplicate_dropped_and_counted`, `test_conflicting_duplicate_quarantined`, `test_conflict_against_already_loaded_version` |
+| schema change | `test_schema_change_missing_column_fails_cleanly`, `test_extra_column_is_warning_not_failure` |
+| partial failure + retry | `test_partial_failure_rolls_back_and_retry_works` |
+| late / out-of-order | `test_late_arriving_older_version_does_not_overwrite`, `test_out_of_order_inside_one_file` |
+| invalid reference key | `test_unknown_customer_vs_bad_format`, replay tests |
+| rerun same input | `test_rerun_same_file_is_skipped`, `test_forced_rerun_creates_no_duplicates` |
+| domain edge cases | amount boundaries 0.01 / 1,000,000.00, >2 decimals, `updated_at < order_ts`, history preserved on update |
+| replay | 9 tests in `test_replay.py` (untouched good rows, corrections audit, idempotent, dry-run, filters) |
+| reconciliation | `test_reconciliation_detects_corruption` (the checks really fail on bad data) |
+| configuration | `test_config.py` (defaults, TOML override changes behaviour, unknown key rejected) |
+| CLI contract | `test_cli.py` (exit codes 0/1/2) |
 
-Phase 5: Performance evaluation and final submission.
+**Expected-answer labels** live in `data/labels/` (separate from `data/sample/`); `verify-labels` compares them with what the pipeline actually did.
 
-### Execution
+## 9. Sample results (seed 42, 200 orders) - see `reports/reconciliation.md`
+Batch 1: 224 rows read -> 202 loaded, 2 exact duplicates dropped, 20 quarantined. Batch 2: 32 rows -> 4 inserted, 20 updated, 6 late (history only), 2 unchanged.
+Replay: 2 resolved by loading missing customers; 8 resolved by corrections; the rest correctly remain `PENDING`.
 
-Complete installation and execution instructions will be maintained here as implementation progresses.
+## 10. Performance (`reports/benchmark.txt`, 100,000 orders -> 111,002 rows incl. defects)
+Optimised ingest ~22k rows/s (~5 s for 111k rows). Naive baseline (per-row SELECT + commit per row) ~0.9k rows/s => **~24x**.
+**Optimisation applied:** bulk prefetch of existing versions (1 query / 500 ids), in-memory customer set, `executemany`, one commit.
+Numbers vary by machine.
 
-### AI Usage Disclosure
+## 11. Known limitations & next steps
+* Single-writer SQLite; no concurrent ingests. Next: Postgres + row-level locks / `INSERT ... ON CONFLICT`.
+* Whole file is read into memory (fine to a few million rows). Next: stream in chunks with per-chunk savepoints.
+* Corrections are CSV-only; no approval workflow/UI.
+* No currency conversion; no status-transition rules (e.g. DELIVERED -> CREATED is accepted if versioned later).
+* Orchestration (Airflow/cron) and alerting (e.g. on non-zero exit / quarantine thresholds) not included.
+* Non-UTF-8 files fail the run (documented, not auto-repaired).
 
-AI tools are used as development assistance for architecture discussion, code review, debugging and documentation. All submitted code and design decisions will be reviewed, executed and validated by the candidate.
+## 12. Naming conventions
+snake_case tables/columns; `dim_`/`fact_` prefixes; IDs: `ORD-########`, `CUST-######`, quarantine `q_<16 hex>` (deterministic),
+`run_id = <type>_<UTC yyyymmddThhmmssZ>_<6 hex>` (unique per execution by design); timestamps ISO-8601 UTC; `run_id` and `source_file` on every target row.
 
-A complete prompt history and explanation of personal contributions will be provided in PROMPT_HISTORY.md.
-
-### Known Limitations
-
-To be documented after implementation and testing.
-
----
-
-## Tech Stack
-- **Language:** Python 3.10+
-- **Database & ORM:** PostgreSQL & SQLAlchemy
-- **Containerization:** Docker & Docker Compose
-- **Testing:** Pytest
-- **CI/CD:** GitHub Actions
-
----
-
-## Project Structure
-```text
-yottaflex-data-platform-engineering/
-├── .github/workflows/ci.yml    # GitHub Actions CI workflow
-├── config/pipeline.yaml        # Pipeline configuration settings
-├── data/
-│   ├── sample/orders.csv       # Sample source dataset
-│   ├── generated/              # Output/generated files directory
-│   └── corrected/              # Corrected files for replay directory
-├── docs/                       # Architecture, design decisions, and AI logs
-├── sql/reporting_queries.sql   # Operational & analytical SQL queries
-├── src/pipeline/               # Core pipeline modules (DB, models, validation, ingest, replay, CLI)
-├── tests/                      # Pytest test suite
-├── requirements.txt            # Python dependencies
-└── docker-compose.yml          # Local PostgreSQL container service
+## 13. AI usage
+See `docs/AI_USAGE.md` and `prompts/PROMPT_LOG.md`.
