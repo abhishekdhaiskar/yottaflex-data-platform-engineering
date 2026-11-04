@@ -1,4 +1,0 @@
-order_id,customer_id,order_date,amount,status
-ORD-1001,CUST-01,2026-10-01T10:00:00,150.50,complete
-ORD-1002,CUST-02,2026-10-01T11:30:00,-20.00,complete
-ORD-1003,,2026-10-01T12:00:00,75.00,complete
