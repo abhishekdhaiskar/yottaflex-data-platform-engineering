@@ -1,13 +1,12 @@
 # Quarantine & Controlled Replay Pipeline (Orders)
 
-A small, fully local data-engineering pipeline that **validates incoming order files, routes bad
-records to a quarantine table (with reason + source file/line + raw payload), and lets an operator
-replay only the quarantined rows after a fix** - without touching rows that already loaded.
+A small, fully local data-engineering pipeline that validates incoming order files, routes bad records to a quarantine table (with reason + source file/line + raw payload), and lets an operator replay only the quarantined rows after a fix—without touching rows that already loaded.
 
-Python 3.11+, **standard library only** (SQLite). `pytest` (tests) and `ruff` (lint, optional) are the only dev tools.
+Python 3.11+, standard library only (SQLite). `pytest` (tests) and `ruff` (lint, optional) are the only dev tools.
 
-## 1. Quick start (clean machine, ~1 minute)
+---
 
+## 1. Quick Start (Clean Machine, ~1 Minute)
 ```bash
 git clone <your-repo-url> && cd <repo>
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
