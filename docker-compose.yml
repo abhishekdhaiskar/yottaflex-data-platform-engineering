@@ -1,28 +1,31 @@
+version: '3.8'
+
 services:
   db:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: yottaflex-postgres
-
     restart: unless-stopped
-
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-yottaflex}
       POSTGRES_USER: ${POSTGRES_USER:-yottaflex}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_password}
-
     ports:
       - "5432:5432"
-
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yottaflex} -d ${POSTGRES_DB:-yottaflex}"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
+    networks:
+      - yottaflex-net
+
+networks:
+  yottaflex-net:
+    driver: bridge
 
 volumes:
   postgres_data:
+    driver: local
