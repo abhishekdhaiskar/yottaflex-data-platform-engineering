@@ -12,4 +12,5 @@ jobs:
       - run: mkdir -p reports
       - run: ruff check src tests
       - run: PYTHONPATH=src python -m pytest -q
+      - run: chmod +x scripts/demo.sh
       - run: ./scripts/demo.sh
